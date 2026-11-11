@@ -3046,7 +3046,10 @@
   var UPD_PART_MIRRORS = [GH_JS, GH_RAW, GH_PROXY, GH_FAST];
   function meCheckUpdate() {
     closeMeModal();
-    if (!(window.KBBridge && window.KBBridge.cloudCheck)) { toast('网页版不支持应用内更新', 'err'); return; }
+    if (!(window.KBBridge && window.KBBridge.cloudCheck)) {
+      toast(/iPad|iPhone|iPod/.test(navigator.userAgent) ? 'iPhone 版打开即是最新，网页自动更新 ✅' : '网页版不支持应用内更新', 'err');
+      return;
+    }
     toast('正在检查更新…');
     var si = 0;
     window.__updCheck = function (raw) {
