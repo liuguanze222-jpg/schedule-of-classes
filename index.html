@@ -1,0 +1,448 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- viewport-fit=cover 适配刘海屏 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>RainFall课程表</title>
+  <!-- iOS 主屏 PWA：Safari「添加到主屏幕」后全屏独立运行 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="RainFall课程表">
+  <link rel="apple-touch-icon" href="icon-apple.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2B5BD7">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
+  <link rel="stylesheet" href="css/style.css?v=20261220a">
+</head>
+<body>
+  <!-- WebGL 液态玻璃背景层（满血模式启用；兼容模式自动隐藏） -->
+  <canvas id="glCanvas" aria-hidden="true"></canvas>
+
+  <!-- ============ 顶栏：标题 + 操作按钮 ============ -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1 class="logo"><span class="glass-cal" aria-hidden="true">
+        <span class="gc-ring gc-r1"></span><span class="gc-ring gc-r2"></span>
+        <span class="gc-head"></span>
+        <span class="gc-body"><i></i><i></i><i></i><i></i><i></i><i></i></i></span>
+      </span><span class="logo-text">RainFall课程表</span></h1>
+      <div class="toolbar">
+        <button id="btnPaste"   class="btn" title="复制教务系统课表表格后，粘贴到这里自动导入">📥<span class="btn-text">导入</span></button>
+        <button id="btnAdd"     class="btn btn-primary" title="手动新增课程">＋<span class="btn-text">新增课程</span></button>
+        <button id="btnList"    class="btn" title="导出可复制的课程清单文本">📋<span class="btn-text">课程清单</span></button>
+        <button id="btnMe"      class="btn btn-icon" title="我的：登录状态 / 账号">👤</button>
+        <button id="btnAppear"  class="btn btn-icon" title="外观：材质 / 壁纸">🎨</button>
+        <button id="btnTheme"   class="btn btn-icon" title="深色 / 浅色模式">🌙</button>
+        <button id="btnSettings" class="btn btn-icon" title="设置 / 批量删除 / 清空">⚙️</button>
+      </div>
+    </div>
+
+    <!-- ============ 周次切换条 ============ -->
+    <div class="weekbar">
+      <button id="weekPrev" class="week-btn" title="上一周">‹</button>
+      <div class="week-label">
+        <span id="weekTitle">第 1 周</span>
+        <span id="weekRange" class="week-range"></span>
+      </div>
+      <button id="weekNext" class="week-btn" title="下一周">›</button>
+      <button id="btnThisWeek" class="btn btn-ghost hidden">回到本周</button>
+    </div>
+  </header>
+
+  <!-- ============ 设置弹出面板（锚定在 ⚙ 按钮下方） ============ -->
+  <div id="settingsPanel" class="settings-panel hidden">
+    <label class="settings-field">
+      <span>学期第 1 周的周一日期</span>
+      <input type="date" id="semesterStartInput">
+    </label>
+    <label class="settings-field">
+      <span>或：本周是第几周（自动倒推第 1 周日期）</span>
+      <input type="number" id="weekNoInput" min="1" max="30" placeholder="如 9">
+    </label>
+    <label class="settings-field">
+      <span>学校名称（顶部标题用，留空 = 河北东方学院）</span>
+      <input type="text" id="schoolNameInput" maxlength="20" placeholder="如：河北东方学院">
+    </label>
+    <div class="settings-field school-fixed">
+      <span>学校 ID</span>
+      <div class="school-id"><b id="schoolIdText">HBDX</b> · <span id="schoolNameText">河北东方学院</span></div>
+    </div>
+    <p class="settings-tip">本版本为学校专属定制：作息（含晚自习）与学校已内置，其他学校无法使用账号匹配。</p>
+    <p class="settings-tip">设置后自动显示每天日期、定位本周、推算单双周。导入含日期的课表文件时也会自动设定。</p>
+    <div class="settings-field">
+      <label class="settings-check">
+        <input type="checkbox" id="remindToggle">上课前提醒我
+      </label>
+      <select id="remindMin" class="settings-select" title="提前提醒时间">
+        <option value="5">提前 5 分钟提醒</option>
+        <option value="10" selected>提前 10 分钟提醒</option>
+        <option value="15">提前 15 分钟提醒</option>
+        <option value="20">提前 20 分钟提醒</option>
+      </select>
+    </div>
+    <p class="settings-tip">提醒需保持本页面处于打开状态：已允许通知时走系统通知，否则用页面内弹窗提醒。</p>
+      <div class="settings-actions">
+        <button id="btnSaveSettings" class="btn btn-primary btn-sm">保存</button>
+        <button id="btnManage" class="btn btn-sm" title="勾选批量删除课程">批量删除</button>
+        <button id="btnClearAll" class="btn btn-danger btn-sm">清空课表</button>
+      </div>
+  </div>
+
+  <!-- ============ 主体：周课表网格（JS 渲染） ============ -->
+  <main class="main">
+    <div class="tt-wrap" id="ttWrap">
+      <div class="tt" id="ttGrid"><!-- 由 app.js 渲染 --></div>
+    </div>
+  </main>
+
+  <!-- ============ 课程 新增/编辑 弹窗 ============ -->
+  <div id="courseModal" class="modal-backdrop hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2 id="courseModalTitle">新增课程</h2>
+        <button class="modal-close" id="courseModalClose" title="关闭">✕</button>
+      </div>
+      <form id="courseForm" class="modal-body" autocomplete="off">
+        <label class="field">
+          <span class="field-label">课程名称 <i class="req">*</i></span>
+          <input type="text" id="fName" required maxlength="40" placeholder="如：高等数学">
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">教师</span>
+            <input type="text" id="fTeacher" maxlength="20" placeholder="选填">
+          </label>
+          <label class="field">
+            <span class="field-label">教室</span>
+            <input type="text" id="fRoom" maxlength="30" placeholder="如：教1-301">
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">星期</span>
+            <select id="fDay">
+              <option value="1">周一</option><option value="2">周二</option>
+              <option value="3">周三</option><option value="4">周四</option>
+              <option value="5">周五</option><option value="6">周六</option>
+              <option value="7">周日</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">开始节次</span>
+            <select id="fStart"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">结束节次</span>
+            <select id="fEnd"></select>
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">起始周</span>
+            <input type="number" id="fWeekStart" min="1" max="30" value="1">
+          </label>
+          <label class="field">
+            <span class="field-label">结束周</span>
+            <input type="number" id="fWeekEnd" min="1" max="30" value="20">
+          </label>
+          <div class="field">
+            <span class="field-label">单双周</span>
+            <div class="seg" id="fWeekType">
+              <label><input type="radio" name="weekType" value="all" checked><span>每周</span></label>
+              <label><input type="radio" name="weekType" value="odd"><span>单周</span></label>
+              <label><input type="radio" name="weekType" value="even"><span>双周</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">颜色（按课程名自动分配，可手动改）</span>
+          <div id="colorPicker" class="color-picker"><!-- 色板由 JS 渲染 --></div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <span class="field-label">课程文字颜色（默认自动适配卡片色）</span>
+          <div class="text-color-row">
+            <button type="button" id="btnTextAuto" class="btn btn-sm btn-primary">自动</button>
+            <input type="color" id="fTextColor" value="#333333" title="自定义文字颜色">
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" id="btnDeleteCourse" class="btn btn-danger hidden">删除课程</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn" id="btnCancelCourse">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============ 导入预览弹窗 ============ -->
+  <div id="importModal" class="modal-backdrop hidden">
+    <div class="modal modal-lg" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>导入预览</h2>
+        <button class="modal-close" id="importModalClose" title="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="importSummary" class="import-summary"></div>
+        <div id="importList" class="import-list"></div>
+        <div id="importWarnings" class="import-warnings"></div>
+        <!-- 学期锚点：不知道第1周具体日期时，填"本周是第几周"即可自动倒推 -->
+        <div class="import-sem">
+          <label>学期第1周周一 <input type="date" id="importSemStart"></label>
+          <span class="sem-or">或</span>
+          <label>本周是第 <input type="number" id="importWeekNo" min="1" max="30" placeholder="N"> 周</label>
+        </div>
+        <div class="import-mode">
+          <label><input type="radio" name="importMode" value="merge" checked>合并导入（保留现有课程）</label>
+          <label><input type="radio" name="importMode" value="replace">覆盖导入（替换全部课程）</label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="btnImportCancel">取消</button>
+        <button class="btn btn-primary" id="btnImportConfirm">确认导入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 粘贴导入弹窗（教务系统网页课表表格 / JSON） ============ -->
+  <div id="pasteModal" class="modal-backdrop hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>📥 导入</h2>
+        <button class="modal-close" id="pasteModalClose" title="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="pasteArea" class="list-text" style="min-height:130px"
+                  placeholder="把教务系统复制的课表表格粘贴到这里…"></textarea>
+        <p id="pasteHint" class="settings-tip" style="margin-top:8px"></p>
+        <!-- 账号直接获取：检测到本地服务（kebiao-server.py）时才显示 -->
+        <div id="accSection" class="acc-section hidden">
+          <div class="acc-head">🔑 教务系统账号直接获取</div>
+          <div class="acc-row">
+            <input type="text" id="accUser" placeholder="学号" autocomplete="off">
+            <div class="pass-wrap">
+              <input type="password" id="accPass" placeholder="密码" autocomplete="off">
+              <button type="button" id="accPassEye" class="acc-pass-eye"
+                      title="显示 / 隐藏密码" aria-label="显示或隐藏密码">👁</button>
+            </div>
+            <button type="button" id="btnAccFetch" class="btn btn-primary btn-sm">获取课表</button>
+          </div>
+          <select id="accSem" class="settings-select hidden" style="margin-top:8px;width:100%"
+                  title="切换学期（重新获取）"></select>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="btnPasteCancel">取消</button>
+        <span class="spacer"></span>
+        <button class="btn btn-primary" id="btnPasteParse">解析并预览</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 外观设置弹窗（材质 / 壁纸） ============ -->
+  <div id="appearModal" class="modal-backdrop hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>🎨 外观</h2>
+        <button class="modal-close" id="appearModalClose" title="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <span class="field-label">渲染性能</span>
+          <div class="seg" id="perfSeg">
+            <label><input type="radio" name="perfMode" value="webgl"><span>满血 WebGL</span></label>
+            <label><input type="radio" name="perfMode" value="css"><span>兼容 CSS</span></label>
+          </div>
+          <p class="settings-tip" id="perfTip" style="margin-top:6px"></p>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <span class="field-label">模块材质</span>
+          <div id="matGrid" class="mat-grid"><!-- 材质选项，JS 渲染 --></div>
+      <label class="set-label">小组件样式</label>
+      <div id="wgStyleGrid" class="mat-grid"><!-- 小组件卡样式，JS 渲染 --></div>
+      <label class="settings-check"><input type="checkbox" id="wgWeatherToggle">随天气模式（晴☀ 雨☔ 雪❄ 阴☁，覆盖整卡）</label>
+      <label class="set-label">天气城市</label>
+      <div class="acc-row" style="margin-bottom:6px">
+        <input type="text" id="cityInput" placeholder="输入城市名搜索，如：廊坊" autocomplete="off">
+        <button type="button" id="btnCitySearch" class="btn btn-primary btn-sm">搜索</button>
+        <button type="button" id="btnCityAuto" class="btn btn-sm" title="清掉手选城市，回到自动定位">📍 自动</button>
+      </div>
+      <div id="cityResults" style="display:none"></div>
+      <div id="cityNow" class="settings-tip" style="margin:0 0 6px"></div>
+      <label class="set-label">进度条颜色</label>
+      <div id="colorGrid" class="mat-grid"><!-- 进度条颜色，JS 渲染 --></div>
+      <label class="set-label">进度方向</label>
+      <div id="dirGrid" class="mat-grid"><!-- 正放/倒放，JS 渲染 --></div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <span class="field-label">表头样式（也可直接点击课表表头修改）</span>
+          <div id="hdrGrid" class="hdr-grid"><!-- 表头样式主题，JS 渲染 --></div>
+        </div>
+        <div class="field" style="margin-top:14px">
+          <span class="field-label">壁纸背景（也可上传自己的图片）</span>
+          <div id="wallGrid" class="wall-grid"><!-- 壁纸选项，JS 渲染 --></div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label class="settings-check" title="满血模式下背景光晕缓慢流动，随倾斜/触摸轻微视差">
+            <input type="checkbox" id="bg3dToggle">背景光晕流动（倾斜手机 / 拖动屏幕有轻微视差）
+          </label>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <span class="field-label">应用图标（顶栏 logo，默认玻璃日历）</span>
+          <div class="text-color-row">
+            <button type="button" id="btnIconUpload" class="btn btn-sm">上传图片</button>
+            <button type="button" id="btnIconReset" class="btn btn-sm">恢复默认</button>
+          </div>
+        </div>
+        <div class="field" id="matTuneWrap" style="margin-top:14px">
+          <span class="field-label">材质微调（按当前材质记忆，拖动即生效）</span>
+          <div class="tune-list">
+            <label class="tune-row"><span>模糊</span><input type="range" id="tuneBlur" min="0" max="40" step="1"><b id="tuneBlurV"></b></label>
+            <label class="tune-row"><span>透明度</span><input type="range" id="tuneAlpha" min="10" max="95" step="1"><b id="tuneAlphaV"></b></label>
+            <label class="tune-row"><span>高光</span><input type="range" id="tuneShine" min="0" max="80" step="1"><b id="tuneShineV"></b></label>
+      <label class="tune-row"><span>色散</span><input type="range" id="tuneDisp" min="0" max="100" step="1"><b id="tuneDispV"></b></label>
+          </div>
+        </div>
+        <p class="settings-tip" style="margin-top:12px">半透明材质搭配壁纸效果最佳；切换周次 / 按压顶栏时会触发水波折射。壁纸仅保存在本机浏览器；导出图片始终使用简洁实底。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 壁纸图片选择器（隐藏） -->
+  <input type="file" id="wallInput" accept="image/*" hidden>
+  <!-- 应用图标选择器（隐藏） -->
+  <input type="file" id="appIconInput" accept="image/*" hidden>
+
+  <!-- ============ 课程清单导出弹窗 ============ -->
+  <div id="listModal" class="modal-backdrop hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>📋 课程清单</h2>
+        <button class="modal-close" id="listModalClose" title="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="listText" class="list-text" readonly></textarea>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="btnListDownload">⬇ 下载 .txt</button>
+        <span class="spacer"></span>
+        <button class="btn" id="btnListClose">关闭</button>
+        <button class="btn btn-primary" id="btnListCopy">复制文本</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 批量删除弹窗 ============ -->
+  <div id="manageModal" class="modal-backdrop hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>批量删除课程</h2>
+        <button class="modal-close" id="manageModalClose" title="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="manage-bar">
+          <label class="settings-check"><input type="checkbox" id="manageAll">全选</label>
+          <span class="spacer"></span>
+          <span id="manageCount" class="week-range"></span>
+        </div>
+        <div id="manageList" class="manage-list"><!-- 课程勾选列表，JS 渲染 --></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" id="btnManageCancel">关闭</button>
+        <span class="spacer"></span>
+        <button class="btn btn-danger" id="btnManageDelete">删除所选</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 上课提醒弹窗（无系统通知权限时的页面内提醒） -->
+  <div id="reminderPopup" class="reminder-popup hidden">
+    <button class="rp-close" id="reminderClose" title="关闭">✕</button>
+    <h4 id="reminderTitle"></h4>
+    <div id="reminderBody" class="rp-body"></div>
+  </div>
+
+  <!-- 文件选择器（隐藏，由“导入”按钮触发） -->
+  <input type="file" id="fileInput" accept=".ics,.xlsx,.xls,.csv,.json" hidden>
+
+  <!-- ============ 密钥激活锁屏 ============ -->
+  <div id="lockModal" class="modal-backdrop hidden">
+    <div class="modal acc-modal" role="dialog" aria-modal="true">
+      <div class="acc-hero">
+        <span class="glass-cal acc-hero-icon" aria-hidden="true">
+          <span class="gc-ring gc-r1"></span><span class="gc-ring gc-r2"></span>
+          <span class="gc-head"></span>
+          <span class="gc-body"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        </span>
+        <h2>密钥激活</h2>
+        <p class="acc-sub">本应用需凭密钥使用，请联系管理员获取</p>
+      </div>
+      <div class="modal-body">
+        <label class="field acc-field">
+          <input type="text" id="lockKey" maxlength="12" placeholder="XXXX-XXXX" autocomplete="off" style="text-transform:uppercase;letter-spacing:2px">
+        </label>
+        <p id="lockErr" class="acc-err hidden"></p>
+        <button type="button" class="acc-login-btn" id="btnLockGo">激 活</button>
+        <button type="button" class="acc-skip" id="btnLockSkip">稍后再说</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 「我的」页面 ============ -->
+  <div id="meModal" class="modal-backdrop hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>👤 我的</h2>
+        <button class="modal-close" id="meModalClose" title="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="me-card">
+          <div class="me-avatar" id="meAvatar">👤</div>
+          <div class="me-info">
+            <div class="me-phone" id="mePhone">未登录</div>
+            <div class="me-state" id="meState">以公共课表模式使用中</div>
+          </div>
+        </div>
+        <div class="me-acts">
+          <button type="button" class="btn" id="btnMeKey" style="width:100%">🔑 更换密钥（拿到新密钥时用）</button>
+        </div>
+        <div class="me-acts">
+          <button type="button" class="btn" id="btnMeWidget" style="width:100%">📌 添加桌面小组件（不打开 APP 看课程）</button>
+        </div>
+        <div class="me-acts">
+          <button type="button" class="btn" id="btnMeUpd" style="width:100%">⬇ 检查更新（云更新到最新版）</button>
+        </div>
+        <div class="me-acts">
+          <button type="button" class="btn" id="btnIcs" style="width:100%">📅 导出系统日历（iPhone 上课提醒）</button>
+        </div>
+        <p class="settings-tip" id="iosTips" style="display:none">iPhone 用户：用 Safari 打开本页 → 底部分享按钮 ⬆ →「添加到主屏幕」，即可全屏使用；上课提醒点上方「导出系统日历」，下载后打开文件 → 全部添加到日历。</p>
+        <p class="settings-tip">激活密钥即解锁全部功能；课表与样式保存在本机，换手机不迁移（可用导入导出）。</p>
+      </div>
+      <div class="modal-foot">
+        <span class="me-ver" id="meVer"></span>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-primary" id="btnMeClose">好的</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 悬浮详情气泡 / 轻提示 -->
+  <div id="tooltip" class="tooltip hidden"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- 本地依赖库：SheetJS(Excel解析) + html2canvas(导出图片) + jsPDF(导出PDF) -->
+  <script src="libs/xlsx.full.min.js"></script>
+  <script src="libs/html2canvas.min.js"></script>
+  <script src="libs/jspdf.umd.min.js"></script>
+  <script>console.log('HBDX KeBiao v20261220a');</script>
+  <!-- WebGL 液态玻璃背景引擎（满血模式），先于主逻辑加载 -->
+  <script src="js/gl-background.js?v=20261220a"></script>
+  <!-- SDF 液态玻璃光学引擎（移植自 liquid-glass，先于主逻辑加载） -->
+  <script src="js/liquid-core.js?v=20261220a"></script>
+  <!-- 业务代码：解析器在前，主逻辑在后 -->
+  <script src="js/parsers.js?v=20261220a"></script>
+  <script src="js/app.js?v=20261220a"></script>
+</body>
+</html>
